@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <title>Wii-style controller</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; }
+    html, body { background: #ffffff; margin: 0; }
+
+    body { max-width: 34rem; margin: 12vh auto; padding: 0 1.25rem; color: #111827; }
+    .setup button { width: 100%; padding: 1rem; border: 0; border-radius: .75rem; background: #22c55e; color: #052e16; font: inherit; font-size: 1.2rem; font-weight: 800; }
+    .setup button:disabled { opacity: .6; }
+    pre { white-space: pre-wrap; color: #374151; line-height: 1.55; }
+    .tip { color: #6b7280; font-size: .92rem; }
+
+    /* ---------- connected state: the remote fills the whole screen ---------- */
+    .remote { display: none; }
+    body.connected { max-width: none; margin: 0; padding: 0; height: 100dvh; overflow: hidden;
+      -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none; }
+    body.connected .setup { display: none; }
+    body.connected .remote { display: flex; }
+
+    /* 1em = unit sized so the whole column fits the screen height and width */
+    .remote {
+      position: fixed; inset: 0;
+      font-size: min(10vw, calc(100dvh / 31));
+      background: #ffffff;
+      flex-direction: column; align-items: center; justify-content: space-evenly;
+      padding: calc(env(safe-area-inset-top, 0px) + 3.2em) 0 calc(env(safe-area-inset-bottom, 0px) + .6em);
+      box-sizing: border-box;
+      color: #8b929c;
+    }
+    .remote button {
+      position: relative; padding: 0; margin: 0; border: 0; cursor: pointer;
+      font: inherit; color: #6b727c; -webkit-tap-highlight-color: transparent;
+      touch-action: none; background: linear-gradient(180deg, #ffffff, #eceff2);
+    }
+
+    /* power, top left */
+    #power { position: absolute; left: .9em; top: calc(env(safe-area-inset-top, 0px) + .8em); width: 2.2em; height: 2.2em; border-radius: 50%;
+      box-shadow: 0 0 0 .1em #c3c9d1, 0 .1em .25em rgba(0,0,0,.2); }
+    #power::before { content: ""; position: absolute; inset: .55em; border: .17em solid #b3333c; border-radius: 50%; border-top-color: transparent; }
+    #power::after { content: ""; position: absolute; left: calc(50% - .09em); top: .4em; width: .18em; height: .7em; background: #b3333c; border-radius: .1em; }
+
+    /* d-pad */
+    .dpad { display: grid; grid-template-columns: repeat(3, 3em); grid-template-rows: repeat(3, 3em); }
+    .dpad button { border: .1em solid #b9bfc8; font-size: 1em; }
+    .dpad .mid { grid-area: 2 / 2; background: linear-gradient(180deg, #ffffff, #eceff2); }
+    #up    { grid-area: 1 / 2; border-bottom: 0; border-radius: .7em .7em 0 0; }
+    #left  { grid-area: 2 / 1; border-right: 0;  border-radius: .7em 0 0 .7em; }
+    #right { grid-area: 2 / 3; border-left: 0;   border-radius: 0 .7em .7em 0; }
+    #down  { grid-area: 3 / 2; border-top: 0;    border-radius: 0 0 .7em .7em; }
+
+    /* A and B */
+    .arow { position: relative; width: 100%; display: flex; justify-content: center; }
+    #a { width: 4.6em; height: 4.6em; border-radius: 50%; font-size: 1.5em; font-weight: 600;
+      box-shadow: 0 0 0 .08em #c3c9d1, 0 .1em .25em rgba(0,0,0,.25); }
+    #b { position: absolute; right: 0; top: 50%; margin-top: -3.6em; width: 1.9em; height: 7.2em; border-radius: 1em 0 0 1em;
+      background: linear-gradient(90deg, #eceef1, #d5d9df); box-shadow: 0 0 0 .08em #b9bfc8; }
+    #b span { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(90deg); font-size: 1em; font-weight: 700; color: #6b727c; }
+
+    /* minus, home, plus */
+    .row3 { display: flex; justify-content: space-between; align-items: center; width: 8.6em; }
+    .small { width: 2.5em; height: 2.5em; border-radius: 50%; font-size: 1.2em; line-height: 1;
+      box-shadow: 0 0 0 .08em #c3c9d1, 0 .1em .2em rgba(0,0,0,.2); }
+    #home { color: #3b8fd1; font-size: 1.5em; }
+
+    /* 1 and 2 */
+    .num { width: 3.6em; height: 3.6em; border-radius: 50%; font-size: 1.15em; font-weight: 600;
+      box-shadow: 0 0 0 .08em #c3c9d1, 0 .1em .25em rgba(0,0,0,.25); }
+
+    .logo { font-size: 1.5em; font-weight: 800; letter-spacing: .02em; color: #a3a9b2; pointer-events: none; }
+
+    /* press feedback */
+    .remote button:active, .remote button.down { filter: brightness(.85); transform: translateY(.05em); }
+    #b:active, #b.down { transform: translateX(.05em); }
+  </style>
+</head>
+<body>
+  <div class="setup">
+    <h1>wii remote</h1>
+    <button id="start">Enable motion</button>
+    <pre id="status">Tap Enable motion, then hold the phone how you would hold a Wii Remote.</pre>
+    <p class="tip">Keep this tab open. The controller auto-calibrates while it is still; press R in the cursor window to recenter.</p>
+  </div>
+
+  <div class="remote" id="remote">
+    <button id="power" aria-label="Power" data-btn="power"></button>
+
+    <div class="dpad">
+      <button id="up" data-btn="up" aria-label="Up">▲</button>
+      <button id="left" data-btn="left" aria-label="Left">◀</button>
+      <div class="mid"></div>
+      <button id="right" data-btn="right" aria-label="Right">▶</button>
+      <button id="down" data-btn="down" aria-label="Down">▼</button>
+    </div>
+
+    <div class="arow">
+      <button id="a" data-btn="a" aria-label="A">A</button>
+      <button id="b" data-btn="b" aria-label="B"><span>B</span></button>
+    </div>
+
+    <div class="row3">
+      <button id="minus" class="small" data-btn="minus" aria-label="Minus">−</button>
+      <button id="home" class="small" data-btn="home" aria-label="Home">⌂</button>
+      <button id="plus" class="small" data-btn="plus" aria-label="Plus">+</button>
+    </div>
+
+    <button id="one" class="num" data-btn="one" aria-label="1">1</button>
+    <button id="two" class="num" data-btn="two" aria-label="2">2</button>
+
+    <div class="logo">Wii</div>
+  </div>
+
+  <script>
+    const start = document.querySelector('#start');
+    const status = document.querySelector('#status');
+    let socket;
+    let lastOrientation = null;
+    let latestGyro = null;
+    let packets = 0;
+    let sawMotion = false;
+    let senderTimer = null;
+
+    function poseFrom(event) {
+      if ([event.alpha, event.beta, event.gamma].every(Number.isFinite)) {
+        lastOrientation = { alpha: event.alpha, beta: event.beta, gamma: event.gamma };
+      }
+    }
+
+    async function requestPermission() {
+      for (const EventType of [window.DeviceOrientationEvent, window.DeviceMotionEvent]) {
+        if (typeof EventType?.requestPermission === 'function') {
+          const result = await EventType.requestPermission();
+          if (result !== 'granted') throw new Error('motion permission was denied');
+        }
+      }
+    }
+
+    // Remote buttons: send {type:'button', name, down} on press and release.
+    function sendButton(name, down) {
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'button', name, down }));
+      }
+    }
+    document.querySelectorAll('[data-btn]').forEach((el) => {
+      const name = el.dataset.btn;
+      const press = (e) => { e.preventDefault(); el.classList.add('down'); sendButton(name, true); };
+      const release = () => { if (el.classList.contains('down')) { el.classList.remove('down'); sendButton(name, false); } };
+      el.addEventListener('pointerdown', press);
+      el.addEventListener('pointerup', release);
+      el.addEventListener('pointercancel', release);
+      el.addEventListener('pointerleave', release);
+      el.addEventListener('contextmenu', (e) => e.preventDefault());
+    });
+
+    start.addEventListener('click', async () => {
+      try {
+        start.disabled = true;
+        status.textContent = 'Requesting motion permission…';
+        await requestPermission();
+
+        const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+        socket = new WebSocket(`${protocol}://${location.host}`);
+        socket.addEventListener('open', () => {
+          socket.send(JSON.stringify({ type: 'hello', role: 'phone' }));
+          status.textContent = 'Connected. Hold still for a moment to calibrate, then swing.';
+          document.body.classList.add('connected');
+        });
+        socket.addEventListener('close', () => {
+          document.body.classList.remove('connected');
+          status.textContent = 'Disconnected. Tap Enable motion to reconnect.';
+          start.disabled = false;
+        });
+        socket.addEventListener('error', () => status.textContent = 'Could not connect to the computer.');
+
+        window.addEventListener('deviceorientation', poseFrom, { passive: true });
+        window.addEventListener('deviceorientationabsolute', poseFrom, { passive: true });
+        window.addEventListener('devicemotion', (event) => {
+          if (!event.rotationRate) return;
+          const { alpha, beta, gamma } = event.rotationRate;
+          if (![alpha, beta, gamma].every(Number.isFinite)) return;
+          sawMotion = true;
+          latestGyro = { x: alpha, y: beta, z: gamma };
+        }, { passive: true });
+
+        // Send the newest sensor sample at a fixed 60 Hz. This decouples packet
+        // cadence from a browser's uneven DeviceMotion event rate.
+        clearInterval(senderTimer);
+        senderTimer = setInterval(() => {
+          if (socket?.readyState !== WebSocket.OPEN || !latestGyro) return;
+          if (!lastOrientation) {
+            status.textContent = 'Gyroscope is active, but the browser has not provided orientation yet. Rotate the phone once.';
+            return;
+          }
+          if (![lastOrientation.alpha, lastOrientation.beta, lastOrientation.gamma].every(Number.isFinite)) return;
+          socket.send(JSON.stringify({
+            type: 'motion',
+            timestamp: performance.now(),
+            gyro: latestGyro,
+            pose: lastOrientation,
+          }));
+          packets++;
+          if (packets % 6 === 0) {
+            status.textContent = [
+              `Sending 60 motion packets/second (${packets} total)`,
+              `gyro:  x ${latestGyro.x.toFixed(1)}  y ${latestGyro.y.toFixed(1)}  z ${latestGyro.z.toFixed(1)} deg/s`,
+              `pose:  yaw ${lastOrientation.alpha.toFixed(1)}  pitch ${lastOrientation.beta.toFixed(1)}  roll ${lastOrientation.gamma.toFixed(1)} deg`,
+            ].join('\n');
+          }
+        }, 1000 / 60);
+        setTimeout(() => {
+          if (!sawMotion && socket?.readyState === WebSocket.OPEN) {
+            document.body.classList.remove('connected');
+            status.textContent = 'Connected, but this browser is not exposing gyroscope data. Use the HTTPS URL in Safari/Chrome and allow Motion & Orientation access.';
+          }
+        }, 2500);
+      } catch (error) {
+        status.textContent = `Could not enable motion: ${error.message}`;
+        start.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

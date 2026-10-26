@@ -1,0 +1,22 @@
+{
+  "name": "wii",
+  "version": "1.0.0",
+  "description": "",
+  "main": "electron-main.js",
+  "scripts": {
+    "start": "set ELECTRON_RUN_AS_NODE=&& electron .",
+    "web": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.3.0",
+    "localtunnel": "^2.0.2",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "electron": "^45.0.0"
+  }
+}

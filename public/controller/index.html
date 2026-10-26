@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wii cursor</title>
+  <style>
+    html, body, canvas { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #06080d; }
+    #help { position: fixed; top: 1rem; left: 1rem; color: #dbeafe; font: 14px/1.4 system-ui, sans-serif; opacity: .7; user-select: none; }
+    #state { color: #86efac; }
+    #telemetry { color: #cbd5e1; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <canvas id="screen"></canvas>
+  <div id="help"><span id="state">Waiting for phone...</span><br><span id="telemetry">No packets received yet.</span><br>Move the phone like a Wii Remote · R: recenter · F: fullscreen</div>
+  <script>
+    const canvas = document.querySelector('#screen');
+    const context = canvas.getContext('2d');
+    const stateLabel = document.querySelector('#state');
+    const telemetry = document.querySelector('#telemetry');
+    const radians = Math.PI / 180;
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+    const wrapDelta = (next, previous) => ((next - previous + 540) % 360) - 180;
+    const player1 = new Image();
+    player1.src = 'player1.png';
+    /**
+     * Fuses the phone's absolute attitude with raw gyro rates.
+     *
+     * The 2x3 rate map is fitted online from each phone's own pose changes.
+     * That means neither the device's axis ordering nor its sign is assumed.
+     * Attitude is the slow, drift-free reference; gyro is the responsive path.
+     */
+    class MotionEngine {
+      constructor() { this.reset(); }
+      reset() {
+        this.cursor = [0.5, 0.5];
+        this.reference = null;
+        this.previousPose = null;
+        this.lastAt = null;
+        this.rate = [0, 0];
+        this.map = [[0, 1, 0], [1, 0, 0]]; // only a harmless bootstrap before learning
+        this.covariance = [[80,0,0],[0,80,0],[0,0,80]];
+        this.offset = [0, 0];
+        this.samples = 0;
+        this.packets = 0;
+      }
+      pose(packet) { return [packet.pose.alpha, packet.pose.beta]; }
+      measure(pose) {
+        if (!this.reference) this.reference = [...pose];
+        return [
+          wrapDelta(pose[0], this.reference[0]) * radians,
+          -wrapDelta(pose[1], this.reference[1]) * radians,
+        ];
+      }
+      updateMap(input, target) {
+        // Recursive least squares, one estimator per cursor axis.
+        const p = this.covariance;
+        const px = p.map(row => row[0]*input[0] + row[1]*input[1] + row[2]*input[2]);
+        const denominator = 0.996 + input[0]*px[0] + input[1]*px[1] + input[2]*px[2];
+        if (denominator < 1e-5) return;
+        const gain = px.map(value => value / denominator);
+        for (let row = 0; row < 2; row++) {
+          const estimate = this.map[row][0]*input[0] + this.map[row][1]*input[1] + this.map[row][2]*input[2];
+          const error = target[row] - estimate;
+          for (let col = 0; col < 3; col++) this.map[row][col] += gain[col] * error;
+        }
+        this.covariance = p.map((row, r) => row.map((value, c) => (value - gain[r] * (input[0]*p[0][c] + input[1]*p[1][c] + input[2]*p[2][c])) / 0.996));
+        this.samples++;
+      }
+      ingest(packet) {
+        this.packets++;
+        const now = performance.now();
+        const pose = this.pose(packet);
+        if (!this.previousPose) {
+          this.previousPose = pose;
+          this.measure(pose);
+          this.lastAt = now;
+          stateLabel.textContent = 'Receiving · hold still briefly to calibrate';
+          telemetry.textContent = `packets: ${this.packets}\ngyro: ${packet.gyro.x.toFixed(1)}, ${packet.gyro.y.toFixed(1)}, ${packet.gyro.z.toFixed(1)} deg/s\nyaw/pitch: ${packet.pose.alpha.toFixed(1)}, ${packet.pose.beta.toFixed(1)} deg`;
+          return;
+        }
+        const dt = clamp((now - this.lastAt) / 1000, 1 / 180, 0.1);
+        this.lastAt = now;
+        const absolute = this.measure(pose);
+        const previousAbsolute = this.measure(this.previousPose);
+        const observedRate = [(absolute[0] - previousAbsolute[0]) / dt, (absolute[1] - previousAbsolute[1]) / dt];
+        this.previousPose = pose;
+
+        // rotationRate is degrees/sec. Fit it against attitude velocity in radians/sec.
+        const input = [packet.gyro.x * radians, packet.gyro.y * radians, packet.gyro.z * radians];
+        const energy = Math.hypot(...input);
+        if (energy > 0.08 && energy < 14 && Math.hypot(...observedRate) < 14) this.updateMap(input, observedRate);
+        const gyroRate = this.map.map(row => row[0]*input[0] + row[1]*input[1] + row[2]*input[2]);
+        this.rate = gyroRate;
+
+        // Integrate the quick gyro path, then softly pull it to the true pose.
+        // At rest the correction becomes strong, erasing accumulated drift.
+        const gain = energy < 0.10 ? 0.16 : 0.018;
+        for (let axis = 0; axis < 2; axis++) {
+          const target = 0.5 + (absolute[axis] + this.offset[axis]) * 0.72;
+          this.cursor[axis] += gyroRate[axis] * dt * 0.72;
+          this.cursor[axis] += (target - this.cursor[axis]) * gain;
+          this.cursor[axis] = clamp(this.cursor[axis], 0.015, 0.985);
+        }
+        console.log(this.cursor);
+        stateLabel.textContent = this.samples < 24 ? `Receiving · learning axes (${this.samples}/24)` : 'Receiving · calibrated';
+        telemetry.textContent = [
+          `packets: ${this.packets}   cursor: ${this.cursor[0].toFixed(3)}, ${this.cursor[1].toFixed(3)}`,
+          `gyro: ${packet.gyro.x.toFixed(1)}, ${packet.gyro.y.toFixed(1)}, ${packet.gyro.z.toFixed(1)} deg/s`,
+          `yaw/pitch: ${packet.pose.alpha.toFixed(1)}, ${packet.pose.beta.toFixed(1)} deg`,
+        ].join('\n');
+      }
+      predictedCursor() {
+        // Render roughly one packet into the future, bounded to avoid wild extrapolation.
+        const lead = 0.028;
+        //return this.cursor.map((value, axis) => clamp(value + this.rate[axis] * lead * 0.72, 0.015, 0.985));
+
+        return this.cursor;
+      }
+      recenter() { this.offset = [0, 0]; this.reference = this.previousPose ? [...this.previousPose] : null; this.cursor = [0.5, 0.5]; }
+    }
+
+    const engine = new MotionEngine();
+    function resize() { canvas.width = innerWidth * devicePixelRatio; canvas.height = innerHeight * devicePixelRatio; context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0); }
+    addEventListener('resize', resize); resize();
+    function draw() {
+      const size = 48;
+      let [x, y] = engine.predictedCursor();
+      x = 1-x;
+      context.clearRect(0, 0, innerWidth, innerHeight);
+      
+      context.drawImage(player1, x * innerWidth - size/4, y * innerHeight, size, size);
+      requestAnimationFrame(draw);
+    }
+    draw();
+
+    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+    const socket = new WebSocket(`${protocol}://${location.host}`);
+    socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'hello', role: 'controller' })));
+    socket.addEventListener('message', event => { const packet = JSON.parse(event.data); if (packet.type === 'motion') engine.ingest(packet); });
+    socket.addEventListener('close', () => stateLabel.textContent = 'Connection to server lost');
+    addEventListener('keydown', event => { if (event.key.toLowerCase() === 'r') engine.recenter(); if (event.key.toLowerCase() === 'f') document.documentElement.requestFullscreen?.(); });
+  </script>
+</body>
+</html>
